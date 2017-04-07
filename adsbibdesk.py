@@ -345,7 +345,7 @@ def process_token(article_token, prefs, bibdesk):
     # pub id
     pub = pub.descriptorAtIndex_(1).descriptorAtIndex_(3).stringValue()
     # automatic cite key
-    bibdesk('set cite key to generated cite key', pub)
+#    bibdesk('set cite key to generated cite key', pub)
 
     # abstract
     if ads_parser.abstract.startswith('http://'):
