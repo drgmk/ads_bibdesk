@@ -105,7 +105,10 @@ In article mode, adsbibdesk accepts many kinds of article tokens:
 
 In PDF Ingest mode, you specify a directory containing PDFs instead of
 an article token (Example: `adsbibdesk -p pdfs` will ingest PDFs from
-the pdfs/ directory).
+the pdfs/ directory). You can optionally add a directory, using `-k 
+done-directory`, where which PDFs will be moved if all DOIs from that
+article were ingested successfully. The same command can be run again to
+retry failed files, or those left behind can be dealt with by hand.
 
 In Pre-print Update mode, every article with an arXiv bibcode will be
 updated if it has a new bibcode."""
@@ -135,6 +138,10 @@ updated if it has a new bibcode."""
         '-r', '--recursive',
         dest='recursive', action="store_true",
         help="Search for PDFs recursively in the directory tree.")
+    pdf_ingest_group.add_option(
+        '-k', '--ok-directory',
+        dest='ok', type=str,
+        help="Import PDFs one at a time, moving them here when done).")
     parser.add_option_group(pdf_ingest_group)
 
     arxiv_update_group = optparse.OptionGroup(parser, "Pre-print Update Mode",
@@ -151,6 +158,7 @@ updated if it has a new bibcode."""
         help='MM/YY date of publication up to which update arXiv')
     parser.add_option_group(arxiv_update_group)
     options, args = parser.parse_args()
+    print options,args
 
     # Get preferences from (optional) config file
     prefs = Preferences()
@@ -177,7 +185,10 @@ updated if it has a new bibcode."""
 
     # Launch the specific workflow
     if options.ingest_pdfs:
-        ingest_pdfs(options, args, prefs)
+        if options.ok:
+            ingest_pdfs_ony_by_one(options, args, prefs)
+        else:
+            ingest_pdfs(options, args, prefs)
     elif options.only_pdf:
         # short-circuit process_articles
         # since BibDesk is not needed
@@ -397,6 +408,67 @@ def process_token(article_token, prefs, bibdesk):
     notify('New publication added',
            bibdesk('cite key', pub).stringValue(),
            ads_parser.title)
+
+
+def ingest_pdfs_ony_by_one(options, args, prefs):
+    """Workflow for attempting to ingest a directory of PDFs into BibDesk.
+
+    This is just a modification of ingest_pdfs, but attempts a one-by-one
+    import, moving PDFs elsewhere if all associated DOIs were imported
+    successfully. Aim is to not have to do these again when something
+    fails half way through... things that get left behind can be done
+    by hand or tried again.
+    """
+    assert len(args) == 1, "Please pass a path to a directory"
+    pdf_dir = args[0]
+    assert os.path.exists(pdf_dir) is True, "%s does not exist" % pdf_dir
+    assert os.path.exists(prefs['options'].get('ok')) is True, \
+                        "%s does not exist" % prefs['options'].ok
+    print "Searching", pdf_dir
+
+    if options.recursive:
+        # Recursive glob solution from
+        # http://stackoverflow.com/a/2186565
+        pdf_paths = []
+        for root, dirnames, filenames in os.walk(pdf_dir):
+            for filename in fnmatch.filter(filenames, '*.pdf'):
+                pdf_paths.append(os.path.join(root, filename))
+    else:
+        pdf_paths = glob.glob(os.path.join(pdf_dir, "*.pdf"))
+
+    # Process each PDF, looking for a DOI
+    grabber = PDFDOIGrabber()
+    for i, pdf_path in enumerate(pdf_paths):
+        dois = grabber.search(pdf_path)
+        if not dois:
+            logging.info(
+                "%i of %i: no DOIs for %s"
+                % (i + 1, len(pdf_paths), pdf_path))
+        else:
+            for doi in dois:
+                logging.info(
+                    "%i of %i: %s = %s"
+                    % (i + 1, len(pdf_paths), os.path.basename(pdf_path), doi))
+
+        # now import DOIs associated with this PDF
+        done_path = prefs['options'].get('ok').rstrip('/')
+        if dois:
+            logging.info('Adding %i articles to BibDesk...' % len(dois))
+            try:
+                process_articles(dois, prefs)
+                if not os.path.exists(done_path+'/success'):
+                    os.mkdir(done_path+'/success')
+                os.rename(pdf_path,done_path+'/success/'+os.path.basename(pdf_path))
+            except:
+                logging.info('Import failed for %s, skipping' % pdf_path)
+                if not os.path.exists(done_path+'/fail'):
+                    os.mkdir(done_path+'/fail')
+                os.rename(pdf_path,done_path+'/fail/'+os.path.basename(pdf_path))
+        else:
+            if not os.path.exists(done_path+'/no-dois'):
+                os.mkdir(done_path+'/no-dois')
+            os.rename(pdf_path,done_path+'/no-dois/'+os.path.basename(pdf_path))
+
 
 
 def ingest_pdfs(options, args, prefs):
