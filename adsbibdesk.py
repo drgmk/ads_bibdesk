@@ -158,7 +158,6 @@ updated if it has a new bibcode."""
         help='MM/YY date of publication up to which update arXiv')
     parser.add_option_group(arxiv_update_group)
     options, args = parser.parse_args()
-    print options,args
 
     # Get preferences from (optional) config file
     prefs = Preferences()
